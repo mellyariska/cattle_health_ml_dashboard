@@ -38,7 +38,7 @@ st.markdown(
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-DATA_DIR = BASE_DIR / "data" / "raw"
+DATA_DIR = BASE_DIR / "data" 
 
 sensor_path = DATA_DIR / "cattle_sensor_data.csv"
 metadata_path = DATA_DIR / "cattle_metadata.csv"
