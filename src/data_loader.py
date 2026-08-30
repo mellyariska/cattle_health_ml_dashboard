@@ -8,24 +8,45 @@ from pathlib import Path
 
 
 # ============================================================
-# HELPER: CLEAN CATTLE ID
+# HELPER FUNCTIONS
 # ============================================================
 
 def clean_cattle_id(series):
     """
-    Safely clean cattle_id without using pandas nullable
-    StringDtype, which can cause casting problems with
-    mixed-type CSV columns.
+    Safely convert cattle IDs to ordinary Python strings.
     """
 
-    def clean_value(value):
+    result = []
+
+    for value in series:
 
         if pd.isna(value):
-            return ""
+            result.append("")
+        else:
+            result.append(str(value).strip())
 
-        return str(value).strip()
+    return pd.Series(
+        result,
+        index=series.index,
+        dtype=object
+    )
 
-    return series.map(clean_value)
+
+def safe_number(value, default=0.0):
+    """
+    Safely convert one value to a Python float.
+    """
+
+    try:
+
+        if pd.isna(value):
+            return default
+
+        return float(value)
+
+    except (ValueError, TypeError):
+
+        return default
 
 
 # ============================================================
@@ -35,22 +56,6 @@ def clean_cattle_id(series):
 def load_data(sensor_path, metadata_path):
     """
     Load cattle sensor data and cattle metadata.
-
-    Parameters
-    ----------
-    sensor_path : str or Path
-        Path to cattle_sensor_data.csv
-
-    metadata_path : str or Path
-        Path to cattle_metadata.csv
-
-    Returns
-    -------
-    sensor : pandas.DataFrame
-        Sensor dataset
-
-    metadata : pandas.DataFrame
-        Cattle metadata
     """
 
     sensor_path = Path(sensor_path)
@@ -91,17 +96,17 @@ def load_data(sensor_path, metadata_path):
     # ========================================================
 
     sensor.columns = [
-        str(col).strip()
-        for col in sensor.columns
+        str(column).strip()
+        for column in sensor.columns
     ]
 
     metadata.columns = [
-        str(col).strip()
-        for col in metadata.columns
+        str(column).strip()
+        for column in metadata.columns
     ]
 
     # ========================================================
-    # VALIDATE CATTLE ID
+    # CHECK REQUIRED COLUMNS
     # ========================================================
 
     if "cattle_id" not in sensor.columns:
@@ -118,6 +123,13 @@ def load_data(sensor_path, metadata_path):
             "from cattle_metadata.csv."
         )
 
+    if "timestamp" not in sensor.columns:
+
+        raise KeyError(
+            "Column 'timestamp' is missing "
+            "from cattle_sensor_data.csv."
+        )
+
     # ========================================================
     # CLEAN CATTLE ID
     # ========================================================
@@ -131,7 +143,7 @@ def load_data(sensor_path, metadata_path):
     )
 
     # ========================================================
-    # REMOVE INVALID CATTLE ID
+    # REMOVE EMPTY CATTLE ID
     # ========================================================
 
     sensor = sensor[
@@ -143,80 +155,72 @@ def load_data(sensor_path, metadata_path):
     ].copy()
 
     # ========================================================
-    # TIMESTAMP PROCESSING
+    # TIMESTAMP
     # ========================================================
 
-    if "timestamp" in sensor.columns:
+    sensor["timestamp"] = pd.to_datetime(
+        sensor["timestamp"],
+        errors="coerce"
+    )
 
-        sensor["timestamp"] = pd.to_datetime(
-            sensor["timestamp"],
-            errors="coerce"
-        )
+    # Remove invalid timestamps
 
-        # Remove invalid timestamps
-
-        sensor = sensor[
-            sensor["timestamp"].notna()
-        ].copy()
-
-    else:
-
-        raise KeyError(
-            "Column 'timestamp' is missing "
-            "from cattle_sensor_data.csv."
-        )
+    sensor = sensor[
+        sensor["timestamp"].notna()
+    ].copy()
 
     # ========================================================
     # SORT DATA
     # ========================================================
 
-    sensor = (
-        sensor
-        .sort_values(
-            ["cattle_id", "timestamp"]
-        )
-        .reset_index(drop=True)
+    sensor = sensor.sort_values(
+        ["timestamp", "cattle_id"]
+    ).reset_index(
+        drop=True
     )
 
     # ========================================================
     # CREATE OBSERVATION DAY
     # ========================================================
+    #
+    # IMPORTANT:
+    # Do NOT use pandas astype("Int64") here.
+    #
+    # Day 1 = first calendar day
+    # Day 2 = second calendar day
+    # etc.
+    # ========================================================
 
-    if not sensor.empty:
+    if len(sensor) > 0:
 
-        first_date = (
-            sensor["timestamp"]
-            .min()
-            .normalize()
-        )
+        first_date = sensor[
+            "timestamp"
+        ].min().normalize()
 
-        sensor["day"] = (
-            sensor["timestamp"]
-            .dt.normalize()
-            .sub(first_date)
-            .dt.days
-            + 1
-        )
+        day_values = []
 
-        sensor["day"] = (
-            pd.to_numeric(
-                sensor["day"],
-                errors="coerce"
+        for timestamp in sensor["timestamp"]:
+
+            current_date = timestamp.normalize()
+
+            difference = (
+                current_date - first_date
+            ).days
+
+            day_values.append(
+                int(difference) + 1
             )
-            .fillna(1)
-            .round()
-            .astype(int)
-        )
+
+        # Assign ordinary Python integers
+
+        sensor["day"] = day_values
 
     else:
 
-        sensor["day"] = pd.Series(
-            index=sensor.index,
-            dtype=int
-        )
+        sensor["day"] = []
 
     # ========================================================
-    # NUMERICAL SENSOR VARIABLES
+    # NUMERICAL COLUMNS
     # ========================================================
 
     numerical_columns = [
@@ -250,9 +254,8 @@ def load_data(sensor_path, metadata_path):
 
         if column in sensor.columns:
 
-            sensor[column] = pd.to_numeric(
-                sensor[column],
-                errors="coerce"
+            sensor[column] = sensor[column].apply(
+                safe_number
             )
 
     # ========================================================
@@ -261,15 +264,23 @@ def load_data(sensor_path, metadata_path):
 
     if "disease_alert" in sensor.columns:
 
-        sensor["disease_alert"] = (
-            pd.to_numeric(
-                sensor["disease_alert"],
-                errors="coerce"
+        alert_values = []
+
+        for value in sensor[
+            "disease_alert"
+        ]:
+
+            number = safe_number(
+                value,
+                default=0
             )
-            .fillna(0)
-            .round()
-            .astype(int)
-        )
+
+            if number >= 0.5:
+                alert_values.append(1)
+            else:
+                alert_values.append(0)
+
+        sensor["disease_alert"] = alert_values
 
     # ========================================================
     # DISEASE RISK SCORE
@@ -277,16 +288,29 @@ def load_data(sensor_path, metadata_path):
 
     if "disease_risk_score" in sensor.columns:
 
+        risk_values = []
+
+        for value in sensor[
+            "disease_risk_score"
+        ]:
+
+            number = safe_number(
+                value,
+                default=0
+            )
+
+            # Keep risk between 0 and 1
+
+            if number < 0:
+                number = 0.0
+
+            if number > 1:
+                number = 1.0
+
+            risk_values.append(number)
+
         sensor["disease_risk_score"] = (
-            pd.to_numeric(
-                sensor["disease_risk_score"],
-                errors="coerce"
-            )
-            .fillna(0)
-            .clip(
-                lower=0,
-                upper=1
-            )
+            risk_values
         )
 
     # ========================================================
@@ -295,12 +319,26 @@ def load_data(sensor_path, metadata_path):
 
     if "health_status" in sensor.columns:
 
+        status_values = []
+
+        for value in sensor[
+            "health_status"
+        ]:
+
+            if pd.isna(value):
+
+                status_values.append(
+                    "Unknown"
+                )
+
+            else:
+
+                status_values.append(
+                    str(value).strip()
+                )
+
         sensor["health_status"] = (
-            sensor["health_status"]
-            .fillna("Unknown")
-            .map(
-                lambda x: str(x).strip()
-            )
+            status_values
         )
 
     # ========================================================
@@ -334,8 +372,7 @@ def load_data(sensor_path, metadata_path):
 
 def merge_metadata(sensor, metadata):
     """
-    Merge sensor data with cattle metadata
-    using cattle_id.
+    Merge sensor data with cattle metadata.
     """
 
     if "cattle_id" not in sensor.columns:
@@ -355,9 +392,7 @@ def merge_metadata(sensor, metadata):
     sensor = sensor.copy()
     metadata = metadata.copy()
 
-    # IMPORTANT:
-    # Use ordinary Python object/string conversion
-    # instead of pandas nullable StringDtype.
+    # Clean IDs again before merge
 
     sensor["cattle_id"] = clean_cattle_id(
         sensor["cattle_id"]
@@ -395,28 +430,32 @@ def get_data_quality(df):
 
     quality = pd.DataFrame({
 
-        "Variable": df.columns,
+        "Variable": list(df.columns),
 
         "Data Type": [
-            str(df[col].dtype)
-            for col in df.columns
+            str(df[column].dtype)
+            for column in df.columns
         ],
 
         "Missing Values": [
-            int(df[col].isna().sum())
-            for col in df.columns
+            int(
+                df[column].isna().sum()
+            )
+            for column in df.columns
         ],
 
         "Missing (%)": [
             float(
-                df[col].isna().mean() * 100
+                df[column].isna().mean() * 100
             )
-            for col in df.columns
+            for column in df.columns
         ],
 
         "Unique Values": [
-            int(df[col].nunique())
-            for col in df.columns
+            int(
+                df[column].nunique()
+            )
+            for column in df.columns
         ]
     })
 
@@ -429,15 +468,14 @@ def get_data_quality(df):
 
 def get_numeric_summary(df):
     """
-    Return descriptive statistics for numerical variables.
+    Return descriptive statistics
+    for numerical variables.
     """
 
     numeric_columns = (
-        df
-        .select_dtypes(
+        df.select_dtypes(
             include="number"
-        )
-        .columns
+        ).columns
     )
 
     if len(numeric_columns) == 0:
@@ -445,7 +483,9 @@ def get_numeric_summary(df):
         return pd.DataFrame()
 
     summary = (
-        df[numeric_columns]
+        df[
+            numeric_columns
+        ]
         .describe()
         .T
         .reset_index()
@@ -489,7 +529,9 @@ def get_latest_cattle_data(df):
             "cattle_id"
         )
         .tail(1)
-        .reset_index(drop=True)
+        .reset_index(
+            drop=True
+        )
     )
 
     return latest
@@ -510,13 +552,15 @@ def get_cattle_data(df, cattle_id):
             "Column 'cattle_id' is required."
         )
 
-    cattle_id = str(cattle_id).strip()
+    target_id = str(
+        cattle_id
+    ).strip()
 
     cattle_data = df[
-        df["cattle_id"].map(
+        df["cattle_id"].apply(
             lambda x: str(x).strip()
         )
-        == cattle_id
+        == target_id
     ].copy()
 
     if "timestamp" in cattle_data.columns:
@@ -524,7 +568,9 @@ def get_cattle_data(df, cattle_id):
         cattle_data = (
             cattle_data
             .sort_values("timestamp")
-            .reset_index(drop=True)
+            .reset_index(
+                drop=True
+            )
         )
 
     return cattle_data
@@ -536,8 +582,8 @@ def get_cattle_data(df, cattle_id):
 
 def daily_average(df, columns):
     """
-    Calculate daily average values for selected
-    sensor variables.
+    Calculate daily average values
+    for selected sensor variables.
     """
 
     if "day" not in df.columns:
@@ -548,14 +594,14 @@ def daily_average(df, columns):
 
     available_columns = [
 
-        col
+        column
 
-        for col in columns
+        for column in columns
 
-        if col in df.columns
+        if column in df.columns
     ]
 
-    if not available_columns:
+    if len(available_columns) == 0:
 
         return pd.DataFrame()
 
@@ -613,7 +659,7 @@ def get_cattle_summary(df):
 
             aggregation[column] = "mean"
 
-    if not aggregation:
+    if len(aggregation) == 0:
 
         return pd.DataFrame()
 
