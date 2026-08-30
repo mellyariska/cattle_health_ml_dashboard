@@ -36,7 +36,7 @@ st.caption(
 # DATA PATH
 # ============================================================
 
-DATA_DIR = Path("data/raw")
+DATA_DIR = Path("data")
 
 sensor_path = (
     DATA_DIR / "cattle_sensor_data.csv"
