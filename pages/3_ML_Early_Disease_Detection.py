@@ -671,16 +671,29 @@ if "classifier" in st.session_state:
         x="Actual",
         y="Predicted",
         title="Actual vs Predicted Disease Risk Score",
-        trendline="ols"
+        labels={
+            "Actual": "Actual Disease Risk Score",
+            "Predicted": "Predicted Disease Risk Score"
+        }
     )
 
 
+    # Garis referensi: prediksi sempurna (Actual = Predicted)
+    score_min = min(
+        prediction_df["Actual"].min(),
+        prediction_df["Predicted"].min()
+    )
+    score_max = max(
+        prediction_df["Actual"].max(),
+        prediction_df["Predicted"].max()
+    )
+
     fig_prediction.add_shape(
         type="line",
-        x0=0,
-        y0=0,
-        x1=1,
-        y1=1
+        x0=score_min,
+        y0=score_min,
+        x1=score_max,
+        y1=score_max
     )
 
 
