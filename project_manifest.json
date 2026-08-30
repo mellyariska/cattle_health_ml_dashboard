@@ -1,0 +1,11 @@
+{
+  "project": "Cattle Health ML Dashboard",
+  "purpose": "Early disease detection using IoT sensor data",
+  "cattle_count": 32,
+  "sensor_records": 69120,
+  "observation_period_days": 90,
+  "models": [
+    "Random Forest Classifier",
+    "Random Forest Regressor"
+  ]
+}
