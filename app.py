@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 from pathlib import Path
 
-from src.data_loader import load_data, merge_metadata
+from src.data_loader_v2 import load_data, merge_metadata
 
 
 # ============================================================
