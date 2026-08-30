@@ -30,6 +30,7 @@ st.markdown(
     dataset sebelum digunakan dalam proses Machine Learning.
 
     Pemeriksaan meliputi:
+
     - jumlah data
     - struktur variabel
     - missing values
@@ -39,32 +40,146 @@ st.markdown(
     - konsistensi cattle ID
     - konsistensi timestamp
     - distribusi disease alert
+    - distribusi disease risk score
     """
 )
+
+
+# ============================================================
+# FIND PROJECT ROOT
+# ============================================================
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+# ============================================================
+# FIND DATASET
+# ============================================================
+
+def find_dataset(filename):
+
+    possible_paths = [
+
+        # Struktur repository Anda saat ini
+        PROJECT_ROOT / "data" / filename,
+
+        # Jika suatu saat menggunakan data/raw
+        PROJECT_ROOT / "data" / "raw" / filename,
+
+        # Fallback berdasarkan working directory
+        Path("data") / filename,
+
+        Path("data") / "raw" / filename
+    ]
+
+    for path in possible_paths:
+
+        if path.exists():
+            return path
+
+    return None
+
+
+sensor_path = find_dataset(
+    "cattle_sensor_data.csv"
+)
+
+metadata_path = find_dataset(
+    "cattle_metadata.csv"
+)
+
+
+# ============================================================
+# CHECK DATASET FILE
+# ============================================================
+
+if sensor_path is None or metadata_path is None:
+
+    st.error(
+        "❌ Dataset tidak ditemukan."
+    )
+
+    st.write(
+        "Struktur folder yang diharapkan:"
+    )
+
+    st.code(
+        """
+cattle_health_ml_dashboard/
+│
+├── app.py
+├── pages/
+│   ├── 1_Individual_Cattle.py
+│   ├── 2_IoT_Sensor_Analysis.py
+│   ├── 3_ML_Early_Disease_Detection.py
+│   └── 4_Data_Quality.py
+│
+├── src/
+│   └── data_loader.py
+│
+└── data/
+    ├── cattle_sensor_data.csv
+    └── cattle_metadata.csv
+        """
+    )
+
+    if sensor_path is None:
+
+        st.error(
+            "❌ cattle_sensor_data.csv tidak ditemukan."
+        )
+
+    if metadata_path is None:
+
+        st.error(
+            "❌ cattle_metadata.csv tidak ditemukan."
+        )
+
+    st.stop()
+
+
+# ============================================================
+# DISPLAY DATASET PATH
+# ============================================================
+
+with st.expander("📁 Dataset Information"):
+
+    st.write(
+        "**Sensor dataset:**",
+        str(sensor_path)
+    )
+
+    st.write(
+        "**Metadata dataset:**",
+        str(metadata_path)
+    )
 
 
 # ============================================================
 # LOAD DATA
 # ============================================================
 
-sensor_path = Path(
-    "data/raw/cattle_sensor_data.csv"
-)
+try:
 
-metadata_path = Path(
-    "data/raw/cattle_metadata.csv"
-)
+    sensor, metadata = load_data(
+        sensor_path,
+        metadata_path
+    )
 
+    df = merge_metadata(
+        sensor,
+        metadata
+    )
 
-sensor, metadata = load_data(
-    sensor_path,
-    metadata_path
-)
+except Exception as e:
 
-df = merge_metadata(
-    sensor,
-    metadata
-)
+    st.error(
+        "❌ Dataset gagal dimuat."
+    )
+
+    st.exception(e)
+
+    st.stop()
 
 
 # ============================================================
@@ -74,7 +189,6 @@ df = merge_metadata(
 st.subheader(
     "📊 Dataset Overview"
 )
-
 
 col1, col2, col3, col4, col5 = st.columns(5)
 
@@ -97,9 +211,17 @@ with col2:
 
 with col3:
 
+    if "cattle_id" in df.columns:
+
+        number_cattle = df["cattle_id"].nunique()
+
+    else:
+
+        number_cattle = 0
+
     st.metric(
         "Number of Cattle",
-        df["cattle_id"].nunique()
+        number_cattle
     )
 
 
@@ -113,9 +235,25 @@ with col4:
 
 with col5:
 
+    if "day" in df.columns:
+
+        observation_days = df["day"].nunique()
+
+    elif "timestamp" in df.columns:
+
+        observation_days = (
+            df["timestamp"]
+            .dt.date
+            .nunique()
+        )
+
+    else:
+
+        observation_days = 0
+
     st.metric(
         "Observation Days",
-        df["day"].nunique()
+        observation_days
     )
 
 
@@ -123,13 +261,12 @@ st.divider()
 
 
 # ============================================================
-# DATASET SHAPE
+# DATASET DIMENSIONS
 # ============================================================
 
 st.subheader(
     "📐 Dataset Dimensions"
 )
-
 
 col1, col2 = st.columns(2)
 
@@ -200,11 +337,10 @@ dtype_df = pd.DataFrame({
 })
 
 
-dtype_df[
-    "Missing (%)"
-] = (
+dtype_df["Missing (%)"] = (
+
     dtype_df["Missing"]
-    / len(df)
+    / max(len(df), 1)
     * 100
 )
 
@@ -246,11 +382,10 @@ missing_df = pd.DataFrame({
 })
 
 
-missing_df[
-    "Missing (%)"
-] = (
+missing_df["Missing (%)"] = (
+
     missing_df["Missing Values"]
-    / len(df)
+    / max(len(df), 1)
     * 100
 )
 
@@ -262,8 +397,6 @@ st.dataframe(
 )
 
 
-# Missing value chart
-
 missing_chart = (
     missing_df[
         missing_df["Missing Values"] > 0
@@ -274,9 +407,13 @@ missing_chart = (
 if not missing_chart.empty:
 
     fig_missing = px.bar(
+
         missing_chart,
+
         x="Variable",
+
         y="Missing Values",
+
         title="Missing Values by Variable"
     )
 
@@ -307,7 +444,10 @@ st.subheader(
 )
 
 
-duplicate_count = df.duplicated().sum()
+duplicate_count = (
+    df.duplicated()
+    .sum()
+)
 
 
 col1, col2 = st.columns(2)
@@ -324,8 +464,9 @@ with col1:
 with col2:
 
     duplicate_percentage = (
+
         duplicate_count
-        / len(df)
+        / max(len(df), 1)
         * 100
     )
 
@@ -360,92 +501,118 @@ st.subheader(
 )
 
 
-cattle_sensor = set(
-    sensor["cattle_id"].unique()
-)
+if (
+    "cattle_id" in sensor.columns
+    and "cattle_id" in metadata.columns
+):
 
-cattle_metadata = set(
-    metadata["cattle_id"].unique()
-)
+    cattle_sensor = set(
+        sensor["cattle_id"]
+        .dropna()
+        .astype(str)
+        .str.strip()
+        .unique()
+    )
 
-
-sensor_only = (
-    cattle_sensor
-    - cattle_metadata
-)
-
-metadata_only = (
-    cattle_metadata
-    - cattle_sensor
-)
-
-
-col1, col2, col3 = st.columns(3)
-
-
-with col1:
-
-    st.metric(
-        "Sensor Cattle",
-        len(cattle_sensor)
+    cattle_metadata = set(
+        metadata["cattle_id"]
+        .dropna()
+        .astype(str)
+        .str.strip()
+        .unique()
     )
 
 
-with col2:
+    sensor_only = (
+        cattle_sensor
+        - cattle_metadata
+    )
 
-    st.metric(
-        "Metadata Cattle",
-        len(cattle_metadata)
+    metadata_only = (
+        cattle_metadata
+        - cattle_sensor
     )
 
 
-with col3:
+    matched_cattle = (
+        cattle_sensor
+        & cattle_metadata
+    )
 
-    st.metric(
-        "Matched Cattle",
-        len(
-            cattle_sensor
-            & cattle_metadata
+
+    col1, col2, col3 = st.columns(3)
+
+
+    with col1:
+
+        st.metric(
+            "Sensor Cattle",
+            len(cattle_sensor)
         )
-    )
 
 
-if not sensor_only and not metadata_only:
+    with col2:
 
-    st.success(
-        "✅ Semua cattle ID pada sensor "
-        "memiliki pasangan metadata."
-    )
+        st.metric(
+            "Metadata Cattle",
+            len(cattle_metadata)
+        )
+
+
+    with col3:
+
+        st.metric(
+            "Matched Cattle",
+            len(matched_cattle)
+        )
+
+
+    if not sensor_only and not metadata_only:
+
+        st.success(
+            "✅ Semua cattle ID pada sensor "
+            "memiliki pasangan metadata."
+        )
+
+    else:
+
+        st.warning(
+            "⚠️ Terdapat cattle ID yang tidak "
+            "memiliki pasangan antara dataset "
+            "sensor dan metadata."
+        )
+
+
+    if sensor_only:
+
+        st.write(
+            "Cattle ID hanya terdapat pada sensor:"
+        )
+
+        st.write(
+            sorted(sensor_only)
+        )
+
+
+    if metadata_only:
+
+        st.write(
+            "Cattle ID hanya terdapat pada metadata:"
+        )
+
+        st.write(
+            sorted(metadata_only)
+        )
 
 else:
 
     st.warning(
-        "⚠️ Terdapat cattle ID yang tidak "
-        "memiliki pasangan antara dataset sensor "
-        "dan metadata."
+        "⚠️ Kolom cattle_id tidak ditemukan "
+        "pada salah satu dataset."
     )
 
-
-if sensor_only:
-
-    st.write(
-        "Cattle ID hanya terdapat pada sensor:"
-    )
-
-    st.write(
-        sorted(sensor_only)
-    )
-
-
-if metadata_only:
-
-    st.write(
-        "Cattle ID hanya terdapat pada metadata:"
-    )
-
-    st.write(
-        sorted(metadata_only)
-    )
+    cattle_sensor = set()
+    cattle_metadata = set()
 
 
 # ============================================================
@@ -465,7 +632,13 @@ if "timestamp" in df.columns:
 
     timestamp_max = df["timestamp"].max()
 
-    timestamp_count = df["timestamp"].nunique()
+    timestamp_count = (
+        df["timestamp"].nunique()
+    )
+
+    invalid_timestamp = (
+        df["timestamp"].isna().sum()
+    )
 
 
     col1, col2, col3 = st.columns(3)
@@ -495,11 +668,6 @@ if "timestamp" in df.columns:
         )
 
 
-    invalid_timestamp = (
-        df["timestamp"].isna().sum()
-    )
-
-
     if invalid_timestamp == 0:
 
         st.success(
@@ -509,9 +677,15 @@ if "timestamp" in df.columns:
     else:
 
         st.warning(
-            f"⚠️ Terdapat {invalid_timestamp} "
+            f"⚠️ Terdapat {invalid_timestamp:,} "
             "timestamp kosong."
         )
+
+else:
+
+    st.warning(
+        "⚠️ Kolom timestamp tidak ditemukan."
+    )
 
 
 # ============================================================
@@ -534,24 +708,30 @@ numeric_columns = (
 )
 
 
-summary = (
-    df[numeric_columns]
-    .describe()
-    .T
-)
+if len(numeric_columns) > 0:
 
+    summary = (
+        df[numeric_columns]
+        .describe()
+        .T
+    )
 
-summary[
-    "missing"
-] = df[
-    numeric_columns
-].isna().sum()
+    summary["missing"] = (
+        df[numeric_columns]
+        .isna()
+        .sum()
+    )
 
+    st.dataframe(
+        summary,
+        use_container_width=True
+    )
 
-st.dataframe(
-    summary,
-    use_container_width=True
-)
+else:
+
+    st.info(
+        "Tidak terdapat variabel numerik."
+    )
 
 
 # ============================================================
@@ -566,130 +746,187 @@ st.subheader(
 
 
 outlier_variables = [
+
     "body_temperature_c",
+
     "heart_rate_bpm",
+
     "respiration_rate_bpm",
+
     "activity_percent",
+
     "feed_intake_kg_day",
+
     "water_intake_l_day",
+
     "ambient_temperature_c",
+
     "humidity_percent",
+
     "co2_ppm",
+
     "nh3_ppm"
 ]
 
 
-available_outlier_variables = [
-    col
-    for col in outlier_variables
-    if col in df.columns
-]
+available_outlier_variables = []
 
 
-selected_outlier_variable = st.selectbox(
-    "Select Variable",
-    available_outlier_variables
-)
+for col in outlier_variables:
+
+    if col in df.columns:
+
+        numeric_series = pd.to_numeric(
+            df[col],
+            errors="coerce"
+        )
+
+        if numeric_series.notna().sum() > 0:
+
+            available_outlier_variables.append(col)
 
 
-q1 = df[
-    selected_outlier_variable
-].quantile(0.25)
+if available_outlier_variables:
 
+    selected_outlier_variable = st.selectbox(
 
-q3 = df[
-    selected_outlier_variable
-].quantile(0.75)
+        "Select Variable",
 
-
-iqr = q3 - q1
-
-
-lower_bound = (
-    q1 - 1.5 * iqr
-)
-
-
-upper_bound = (
-    q3 + 1.5 * iqr
-)
-
-
-outliers = df[
-    (
-        df[selected_outlier_variable]
-        < lower_bound
-    )
-    |
-    (
-        df[selected_outlier_variable]
-        > upper_bound
-    )
-]
-
-
-col1, col2, col3 = st.columns(3)
-
-
-with col1:
-
-    st.metric(
-        "Q1",
-        f"{q1:.3f}"
+        available_outlier_variables
     )
 
 
-with col2:
+    numeric_data = pd.to_numeric(
 
-    st.metric(
-        "Q3",
-        f"{q3:.3f}"
+        df[
+            selected_outlier_variable
+        ],
+
+        errors="coerce"
     )
 
 
-with col3:
+    q1 = numeric_data.quantile(
+        0.25
+    )
 
-    st.metric(
-        "Outlier Records",
-        f"{len(outliers):,}"
+    q3 = numeric_data.quantile(
+        0.75
+    )
+
+    iqr = q3 - q1
+
+
+    lower_bound = (
+        q1 - 1.5 * iqr
+    )
+
+    upper_bound = (
+        q3 + 1.5 * iqr
     )
 
 
-fig_box = px.box(
-    df,
-    y=selected_outlier_variable,
-    points="outliers",
-    title=f"Outlier Detection — {selected_outlier_variable}"
-)
+    outliers = df[
+
+        (
+            numeric_data
+            < lower_bound
+        )
+
+        |
+
+        (
+            numeric_data
+            > upper_bound
+        )
+    ]
 
 
-st.plotly_chart(
-    fig_box,
-    use_container_width=True
-)
+    col1, col2, col3 = st.columns(3)
 
 
-# ============================================================
-# DISTRIBUTION
-# ============================================================
+    with col1:
 
-st.subheader(
-    "📊 Variable Distribution"
-)
-
-
-fig_distribution = px.histogram(
-    df,
-    x=selected_outlier_variable,
-    nbins=50,
-    title=f"Distribution — {selected_outlier_variable}"
-)
+        st.metric(
+            "Q1",
+            f"{q1:.3f}"
+        )
 
 
-st.plotly_chart(
-    fig_distribution,
-    use_container_width=True
-)
+    with col2:
+
+        st.metric(
+            "Q3",
+            f"{q3:.3f}"
+        )
+
+
+    with col3:
+
+        st.metric(
+            "Outlier Records",
+            f"{len(outliers):,}"
+        )
+
+
+    plot_df = pd.DataFrame({
+
+        selected_outlier_variable:
+            numeric_data
+    })
+
+
+    fig_box = px.box(
+
+        plot_df,
+
+        y=selected_outlier_variable,
+
+        points="outliers",
+
+        title=(
+            "Outlier Detection — "
+            f"{selected_outlier_variable}"
+        )
+    )
+
+
+    st.plotly_chart(
+
+        fig_box,
+
+        use_container_width=True
+    )
+
+
+    fig_distribution = px.histogram(
+
+        plot_df,
+
+        x=selected_outlier_variable,
+
+        nbins=50,
+
+        title=(
+            "Distribution — "
+            f"{selected_outlier_variable}"
+        )
+    )
+
+
+    st.plotly_chart(
+
+        fig_distribution,
+
+        use_container_width=True
+    )
+
+else:
+
+    st.info(
+        "Tidak terdapat variabel numerik "
+        "yang sesuai untuk analisis outlier."
+    )
 
 
 # ============================================================
@@ -705,47 +942,78 @@ st.subheader(
 
 if "disease_alert" in df.columns:
 
+    alert_numeric = pd.to_numeric(
+        df["disease_alert"],
+        errors="coerce"
+    )
+
+
     alert_counts = (
-        df["disease_alert"]
-        .value_counts()
+
+        alert_numeric
+        .value_counts(
+            dropna=False
+        )
         .reset_index()
     )
 
 
     alert_counts.columns = [
+
         "Disease Alert",
+
         "Records"
     ]
 
 
-    alert_counts[
-        "Status"
-    ] = alert_counts[
-        "Disease Alert"
-    ].map({
-        0: "Normal",
-        1: "Disease Alert"
-    })
+    alert_counts["Status"] = (
+
+        alert_counts[
+            "Disease Alert"
+        ]
+        .map({
+
+            0: "Normal",
+
+            1: "Disease Alert"
+        })
+        .fillna("Unknown")
+    )
 
 
     st.dataframe(
+
         alert_counts,
+
         use_container_width=True,
+
         hide_index=True
     )
 
 
     fig_alert = px.pie(
+
         alert_counts,
+
         names="Status",
+
         values="Records",
+
         title="Disease Alert Distribution"
     )
 
 
     st.plotly_chart(
+
         fig_alert,
+
         use_container_width=True
+    )
+
+else:
+
+    st.info(
+        "Kolom disease_alert tidak ditemukan."
     )
 
 
@@ -761,42 +1029,65 @@ st.subheader(
 if "health_status" in df.columns:
 
     health_counts = (
+
         df["health_status"]
-        .value_counts()
+
+        .value_counts(
+            dropna=False
+        )
+
         .reset_index()
     )
 
 
     health_counts.columns = [
+
         "Health Status",
+
         "Records"
     ]
 
 
     st.dataframe(
+
         health_counts,
+
         use_container_width=True,
+
         hide_index=True
     )
 
 
     fig_health = px.bar(
+
         health_counts,
+
         x="Health Status",
+
         y="Records",
+
         text_auto=True,
+
         title="Health Status Distribution"
     )
 
 
     st.plotly_chart(
+
         fig_health,
+
         use_container_width=True
+    )
+
+else:
+
+    st.info(
+        "Kolom health_status tidak ditemukan."
     )
 
 
 # ============================================================
-# RISK SCORE DISTRIBUTION
+# DISEASE RISK SCORE
 # ============================================================
 
 st.divider()
@@ -808,63 +1099,113 @@ st.subheader(
 
 if "disease_risk_score" in df.columns:
 
-    risk = df[
-        "disease_risk_score"
-    ]
+    risk = pd.to_numeric(
 
+        df[
+            "disease_risk_score"
+        ],
 
-    col1, col2, col3 = st.columns(3)
-
-
-    with col1:
-
-        st.metric(
-            "Minimum Risk",
-            f"{risk.min():.3f}"
-        )
-
-
-    with col2:
-
-        st.metric(
-            "Average Risk",
-            f"{risk.mean():.3f}"
-        )
-
-
-    with col3:
-
-        st.metric(
-            "Maximum Risk",
-            f"{risk.max():.3f}"
-        )
-
-
-    fig_risk = px.histogram(
-        df,
-        x="disease_risk_score",
-        nbins=50,
-        title="Disease Risk Score Distribution"
+        errors="coerce"
     )
 
 
-    fig_risk.add_vline(
-        x=0.30,
-        line_dash="dash",
-        annotation_text="Medium Risk"
-    )
+    valid_risk = risk.dropna()
 
 
-    fig_risk.add_vline(
-        x=0.70,
-        line_dash="dash",
-        annotation_text="High Risk"
-    )
+    if len(valid_risk) > 0:
+
+        col1, col2, col3 = st.columns(3)
 
 
-    st.plotly_chart(
-        fig_risk,
-        use_container_width=True
+        with col1:
+
+            st.metric(
+
+                "Minimum Risk",
+
+                f"{valid_risk.min():.3f}"
+            )
+
+
+        with col2:
+
+            st.metric(
+
+                "Average Risk",
+
+                f"{valid_risk.mean():.3f}"
+            )
+
+
+        with col3:
+
+            st.metric(
+
+                "Maximum Risk",
+
+                f"{valid_risk.max():.3f}"
+            )
+
+
+        risk_plot_df = pd.DataFrame({
+
+            "disease_risk_score":
+                valid_risk
+        })
+
+
+        fig_risk = px.histogram(
+
+            risk_plot_df,
+
+            x="disease_risk_score",
+
+            nbins=50,
+
+            title=(
+                "Disease Risk Score Distribution"
+            )
+        )
+
+
+        fig_risk.add_vline(
+
+            x=0.30,
+
+            line_dash="dash",
+
+            annotation_text="Medium Risk"
+        )
+
+
+        fig_risk.add_vline(
+
+            x=0.70,
+
+            line_dash="dash",
+
+            annotation_text="High Risk"
+        )
+
+
+        st.plotly_chart(
+
+            fig_risk,
+
+            use_container_width=True
+        )
+
+    else:
+
+        st.info(
+            "Tidak terdapat nilai disease risk score "
+            "yang valid."
+        )
+
+else:
+
+    st.info(
+        "Kolom disease_risk_score tidak ditemukan."
     )
 
 
@@ -886,59 +1227,86 @@ total_cells = (
 
 
 missing_cells = (
-    df.isna().sum().sum()
-)
-
-
-duplicate_cells = (
-    duplicate_count
+    df.isna()
+    .sum()
+    .sum()
 )
 
 
 missing_score = (
+
     1
     - (
         missing_cells
-        / total_cells
+        / max(total_cells, 1)
     )
 )
 
 
 duplicate_score = (
+
     1
     - (
-        duplicate_cells
-        / len(df)
+        duplicate_count
+        / max(len(df), 1)
     )
 )
 
 
-cattle_consistency_score = (
-    len(
-        cattle_sensor
-        & cattle_metadata
+if cattle_sensor or cattle_metadata:
+
+    cattle_consistency_score = (
+
+        len(
+            cattle_sensor
+            & cattle_metadata
+        )
+
+        /
+
+        max(
+            len(cattle_sensor),
+            len(cattle_metadata),
+            1
+        )
     )
-    /
-    max(
-        len(cattle_sensor),
-        len(cattle_metadata)
-    )
-)
+
+else:
+
+    cattle_consistency_score = 0
 
 
 quality_score = (
+
     (
+
         missing_score
+
         + duplicate_score
+
         + cattle_consistency_score
+
     )
+
     / 3
+
     * 100
 )
 
 
+quality_score = max(
+    0,
+    min(
+        quality_score,
+        100
+    )
+)
+
+
 st.metric(
+
     "Overall Data Quality Score",
+
     f"{quality_score:.2f}%"
 )
 
@@ -981,23 +1349,37 @@ st.subheader(
 
 
 preview_rows = st.slider(
+
     "Number of rows to display",
+
     min_value=10,
-    max_value=500,
-    value=100,
+
+    max_value=min(
+        500,
+        max(len(df), 10)
+    ),
+
+    value=min(
+        100,
+        max(len(df), 10)
+    ),
+
     step=10
 )
 
 
 st.dataframe(
+
     df.head(preview_rows),
+
     use_container_width=True,
+
     hide_index=True
 )
 
 
 # ============================================================
-# DOWNLOAD CLEAN DATA
+# EXPORT DATA
 # ============================================================
 
 st.divider()
@@ -1007,17 +1389,26 @@ st.subheader(
 )
 
 
-csv_data = df.to_csv(
-    index=False
-).encode(
-    "utf-8"
+csv_data = (
+
+    df.to_csv(
+        index=False
+    )
+
+    .encode("utf-8")
 )
 
 
 st.download_button(
+
     label="⬇️ Download Merged Dataset",
+
     data=csv_data,
-    file_name="cattle_health_merged_dataset.csv",
+
+    file_name=(
+        "cattle_health_merged_dataset.csv"
+    ),
+
     mime="text/csv"
 )
 
@@ -1034,32 +1425,33 @@ st.subheader(
 
 
 st.info(
+
     f"""
-    **Ringkasan kualitas data:**
+**Ringkasan kualitas data:**
 
-    • Dataset sensor memiliki **{len(sensor):,} records**.
+• Dataset sensor memiliki **{len(sensor):,} records**.
 
-    • Dataset mencakup **{df["cattle_id"].nunique()} sapi**.
+• Dataset mencakup **{df["cattle_id"].nunique() if "cattle_id" in df.columns else 0} sapi**.
 
-    • Periode pengamatan mencakup
-      **{df["day"].nunique()} hari**.
+• Periode pengamatan mencakup
+**{observation_days} hari**.
 
-    • Jumlah missing values:
-      **{missing_cells:,}**.
+• Jumlah missing values:
+**{missing_cells:,}**.
 
-    • Jumlah duplicate records:
-      **{duplicate_count:,}**.
+• Jumlah duplicate records:
+**{duplicate_count:,}**.
 
-    • Konsistensi cattle ID:
-      **{cattle_consistency_score * 100:.2f}%**.
+• Konsistensi cattle ID:
+**{cattle_consistency_score * 100:.2f}%**.
 
-    • Overall Data Quality Score:
-      **{quality_score:.2f}%**.
+• Overall Data Quality Score:
+**{quality_score:.2f}%**.
 
-    Dataset yang telah melalui pemeriksaan kualitas dapat
-    dilanjutkan ke tahap preprocessing, feature engineering,
-    training Machine Learning, dan forecasting.
-    """
+Dataset yang telah melalui pemeriksaan kualitas dapat
+dilanjutkan ke tahap preprocessing, feature engineering,
+training Machine Learning, dan forecasting.
+"""
 )
 
 
