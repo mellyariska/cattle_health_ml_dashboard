@@ -4,7 +4,7 @@ import numpy as np
 import plotly.express as px
 from pathlib import Path
 
-from src.data_loader import load_data, merge_metadata
+from src.data_loader_v2 import load_data, merge_metadata
 
 
 # ============================================================
@@ -64,12 +64,12 @@ def find_dataset(filename):
         PROJECT_ROOT / "data" / filename,
 
         # Jika suatu saat menggunakan data/raw
-        PROJECT_ROOT / "data" / "raw" / filename,
+        PROJECT_ROOT / "data" / filename,
 
         # Fallback berdasarkan working directory
         Path("data") / filename,
 
-        Path("data") / "raw" / filename
+        Path("data") / filename
     ]
 
     for path in possible_paths:
