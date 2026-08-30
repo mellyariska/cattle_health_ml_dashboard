@@ -56,11 +56,11 @@ st.markdown(
 # ============================================================
 
 sensor_path = Path(
-    "data/raw/cattle_sensor_data.csv"
+    "data/cattle_sensor_data.csv"
 )
 
 metadata_path = Path(
-    "data/raw/cattle_metadata.csv"
+    "data/cattle_metadata.csv"
 )
 
 
