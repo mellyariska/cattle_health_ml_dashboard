@@ -18,7 +18,7 @@ from sklearn.metrics import (
     confusion_matrix
 )
 
-from src.data_loader import load_data, merge_metadata
+from src.data_loader_v2 import load_data, merge_metadata
 from src.ml_model import FEATURES
 
 
